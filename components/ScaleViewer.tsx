@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAppStore } from '../store/useAppStore';
-import { ScaleEntry, Rank, ServiceType, Military } from '../types';
+import { ScaleEntry, Rank, ServiceType, Military, PendingSwap } from '../types';
 import { isRedScale, syncPersonnelStats, commitScaleToHistory, parseISO } from '../utils/helpers';
 import { logAuditAction } from '../services/db';
 import { format, addDays, differenceInDays } from 'date-fns';
@@ -570,7 +570,7 @@ const ScaleViewer: React.FC = () => {
     setSwapReason('');
   };
 
-  const executeSwap = async (targetMilitary: Military, targetEntryId?: string) => {
+  const executeSwap = async (targetMilitary: Military, targetEntryId?: string, createPendingSwap: boolean = false) => {
     if (!swapSource) return;
     setIsProcessing(true);
 
@@ -632,6 +632,73 @@ const ScaleViewer: React.FC = () => {
                 };
 
                 logDetails = `Permuta realizada: ${sourceMilName} (Dia ${sourceEntry.date}) <-> ${targetEntry.militaryName} (Dia ${targetEntry.date})`;
+            } else if (createPendingSwap) {
+                const sourceMil = data.personnel.find(m => m.id === sourceEntry.militaryId);
+                if (!sourceMil) {
+                    setModalConfig({
+                        isOpen: true,
+                        title: "Permuta Pendente não criada",
+                        message: "Não foi possível identificar o militar de origem para registrar a permuta pendente.",
+                        onConfirm: () => setModalConfig(null)
+                    });
+                    setIsProcessing(false);
+                    return;
+                }
+
+                const pendingSwap: PendingSwap = {
+                    id: `ps_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                    sourceEntryId: sourceEntry.id,
+                    sourceDate,
+                    sourceServiceTypeId: sourceEntry.serviceTypeId,
+                    sourceMilitaryId: sourceMil.id,
+                    sourceMilitaryName: sourceMil.warName,
+                    sourceMilitaryRank: sourceMil.rank,
+                    targetMilitaryId: targetMilitary.id,
+                    targetMilitaryName: targetMilitary.warName,
+                    targetMilitaryRank: targetMilitary.rank,
+                    createdAt: new Date().toISOString()
+                };
+
+                const existingPending = currentData.pendingSwaps?.some(ps =>
+                    ps.sourceEntryId === pendingSwap.sourceEntryId && ps.targetMilitaryId === pendingSwap.targetMilitaryId
+                );
+
+                if (existingPending) {
+                    setModalConfig({
+                        isOpen: true,
+                        title: "Permuta Pendente já existe",
+                        message: "Já existe uma permuta pendente para este militar e este serviço de origem.",
+                        onConfirm: () => setModalConfig(null)
+                    });
+                    setIsProcessing(false);
+                    return;
+                }
+
+                const newData = {
+                    ...currentData,
+                    pendingSwaps: [...(currentData.pendingSwaps || []), pendingSwap]
+                };
+
+                setAppData(newData);
+
+                await logAuditAction({
+                    action: 'CREATE_PENDING_SWAP',
+                    user_id: currentUser.username,
+                    deleted_item_id: sourceEntry.id,
+                    deleted_item_type: 'SCALE_ENTRY',
+                    details: `Permuta pendente criada: ${sourceEntry.militaryName} aguardando próxima escala de ${targetMilitary.warName} (serviço ${sourceEntry.serviceTypeId} em ${sourceDate}).`
+                });
+
+                setModalConfig({
+                    isOpen: true,
+                    title: "Permuta Pendente Registrada",
+                    message: `A permuta foi salva. Quando ${targetMilitary.warName} entrar em uma escala futura, a troca com ${sourceEntry.militaryName} será aplicada automaticamente.`,
+                    onConfirm: () => setModalConfig(null)
+                });
+
+                setSwapSource(null);
+                setIsProcessing(false);
+                return;
             } else {
                 console.error("Não foi possível localizar o serviço de destino.");
                 setIsProcessing(false);
@@ -639,6 +706,23 @@ const ScaleViewer: React.FC = () => {
             }
 
         } else {
+            const alreadyScaledSameDay = newScale.some(s =>
+                s.id !== sourceEntry.id &&
+                s.militaryId === targetMilitary.id &&
+                s.date.substring(0, 10) === sourceDate
+            );
+
+            if (alreadyScaledSameDay) {
+                setModalConfig({
+                    isOpen: true,
+                    title: "Substituição bloqueada",
+                    message: `${targetMilitary.warName} já possui serviço neste dia. Para evitar dupla escala, selecione outro militar ou use a opção de TROCA.`,
+                    onConfirm: () => setModalConfig(null)
+                });
+                setIsProcessing(false);
+                return;
+            }
+
             const oldName = sourceEntry.militaryName;
             const originalOwner = sourceEntry.originalMilitaryId || sourceEntry.militaryId;
             
@@ -686,6 +770,7 @@ const ScaleViewer: React.FC = () => {
       if (p.id === swapSource.militaryId) return false;
       if (p.status !== 'ATIVO') return false;
       if (swapMode === 'SUBSTITUICAO' && p.unavailableDates.some(d => d.substring(0, 10) === sourceDate)) return false;
+      if (swapMode === 'SUBSTITUICAO' && data.scale.some(s => s.date.substring(0, 10) === sourceDate && s.militaryId === p.id)) return false;
 
       const forcedServices = p.exemptions?.forceAllowedServices || [];
       const hasExclusivity = forcedServices.length > 0;
@@ -741,11 +826,6 @@ const ScaleViewer: React.FC = () => {
          }
       }
 
-      if (swapMode === 'TROCA') {
-          const hasFutureScales = data.scale.some(s => s.militaryId === p.id && s.date >= sourceDate);
-          if (!hasFutureScales) return false;
-      }
-      
       if (swapSearchTerm) {
           const term = swapSearchTerm.toLowerCase();
           return p.warName.toLowerCase().includes(term) || p.number.includes(term);
@@ -839,8 +919,8 @@ const ScaleViewer: React.FC = () => {
                     <div className="mb-2">
                         <div className="text-xs font-bold uppercase mb-1 text-gray-500">
                             {swapMode === 'TROCA' 
-                                ? "Candidatos Disponíveis (Apenas quem possui escala futura)" 
-                                : "Candidatos Disponíveis (Escalados ou de Folga)"}
+                                ? "Candidatos Disponíveis (com escala futura ou permuta pendente)" 
+                                : "Candidatos Disponíveis (Apenas militares de folga no dia)"}
                         </div>
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -861,7 +941,7 @@ const ScaleViewer: React.FC = () => {
                         <div className="flex flex-col items-center justify-center h-40 text-gray-400">
                             <Shield className="w-10 h-10 mb-2 opacity-20" />
                             <span className="text-sm italic">Nenhum militar encontrado compatível com as regras.</span>
-                            {swapMode === 'TROCA' && <span className="text-[10px] mt-1 text-center max-w-xs text-red-400">Verifique se há impedimentos de Antiguidade (Ano de Formação) ou Regras de Setor para o serviço cruzado.</span>}
+                            {swapMode === 'TROCA' && <span className="text-[10px] mt-1 text-center max-w-xs text-red-400">Verifique impedimentos de Antiguidade (Ano de Formação), Regras de Setor e regras de Exclusividade.</span>}
                         </div>
                     ) : (
                         availableCandidates.map(candidate => {
@@ -875,7 +955,7 @@ const ScaleViewer: React.FC = () => {
                                     .sort((a,b) => a.date.localeCompare(b.date))[0]
                                 : null;
 
-                            if (swapMode === 'TROCA' && !isWorkingToday && !nextService) return null;
+                            const shouldCreatePendingSwap = swapMode === 'TROCA' && !isWorkingToday && !nextService;
 
                             const isExclusive = candidate.exemptions?.forceAllowedServices?.length || 0 > 0;
 
@@ -883,7 +963,7 @@ const ScaleViewer: React.FC = () => {
                                 <div 
                                     key={candidate.id} 
                                     className="bg-white p-3 rounded-lg border border-gray-200 hover:border-military-500 cursor-pointer transition-all hover:shadow-md flex justify-between items-center group" 
-                                    onClick={() => executeSwap(candidate, nextService?.id)}
+                                    onClick={() => executeSwap(candidate, nextService?.id, shouldCreatePendingSwap)}
                                 >
                                     <div className="flex items-center gap-3">
                                         <div className={`text-center min-w-[40px] px-2 py-1 rounded text-xs font-bold border ${isWorkingToday ? 'bg-orange-50 text-orange-700 border-orange-200' : 'bg-green-50 text-green-700 border-green-200'}`}>
@@ -905,11 +985,20 @@ const ScaleViewer: React.FC = () => {
                                                         (Trocar com: {format(new Date(nextService.date.substring(0, 10) + 'T12:00:00'), "dd/MM")})
                                                     </span>
                                                 )}
+                                                {shouldCreatePendingSwap && (
+                                                    <span className="text-purple-600 font-medium ml-1">
+                                                        (Criar permuta pendente automática)
+                                                    </span>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
                                     <div className={`opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1 rounded-full text-xs font-bold flex items-center ${swapMode === 'TROCA' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
-                                        {swapMode === 'TROCA' ? <><ArrowLeftRight className="w-3 h-3 mr-1" /> TROCAR</> : <><UserPlus className="w-3 h-3 mr-1" /> SUBSTITUIR</>}
+                                        {swapMode === 'TROCA' ? (
+                                            shouldCreatePendingSwap
+                                              ? <><ArrowLeftRight className="w-3 h-3 mr-1" /> AGENDAR TROCA</>
+                                              : <><ArrowLeftRight className="w-3 h-3 mr-1" /> TROCAR</>
+                                        ) : <><UserPlus className="w-3 h-3 mr-1" /> SUBSTITUIR</>}
                                     </div>
                                 </div>
                             );

@@ -9,7 +9,7 @@ const getEnv = (key: string): string => {
   return (import.meta as any).env?.[key] || '';
 };
 
-export const getDbConfig = () => {
+export const getDbConfig = (): { url: string; key: string } => {
   const stored = localStorage.getItem(DB_CONFIG_KEY);
   if (stored) return JSON.parse(stored);
 
@@ -20,6 +20,8 @@ export const getDbConfig = () => {
     return { url, key };
   }
   
+  // Mantém compatibilidade com o cliente singleton/fallback definido em lib/supabaseClient.ts
+  // para que o app não fique marcado como "offline" quando não há config manual/env explícita.
   return { url: 'Configurado via Singleton', key: '******' };
 };
 
@@ -62,7 +64,9 @@ export const fetchRemoteData = async (): Promise<AppData | null> => {
     return data?.content as AppData;
   } catch (err) {
     console.error("[SUPABASE] Erro ao buscar dados:", err);
-    return null;
+    // Mantém compatibilidade com o cliente singleton/fallback definido em lib/supabaseClient.ts
+  // para que o app não fique marcado como "offline" quando não há config manual/env explícita.
+  return { url: 'Configurado via Singleton', key: '******' };
   }
 };
 
