@@ -1,0 +1,5 @@
+{
+  "name": "HFA Escala de Serviço",
+  "description": "Sistema automático de escala de serviço para Cabos e Soldados com gestão de rodízio e prioridades.",
+  "requestFramePermissions": []
+}
