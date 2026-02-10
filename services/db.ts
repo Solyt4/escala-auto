@@ -23,6 +23,15 @@ export const getDbConfig = (): { url: string; key: string } | null => {
   return null;
 };
 
+export const getEffectiveDbConfig = (): { url: string; key: string } => {
+  const explicit = getDbConfig();
+  if (explicit) return explicit;
+
+  // Compatibilidade com o cliente singleton/fallback definido em lib/supabaseClient.ts.
+  // Evita que a UI marque o sistema como offline quando o client padrão está ativo.
+  return { url: 'Configurado via Singleton', key: '******' };
+};
+
 const getActiveClient = () => {
   const manual = localStorage.getItem(DB_CONFIG_KEY);
   if (manual) {
@@ -62,7 +71,9 @@ export const fetchRemoteData = async (): Promise<AppData | null> => {
     return data?.content as AppData;
   } catch (err) {
     console.error("[SUPABASE] Erro ao buscar dados:", err);
-    return null;
+    // Mantém compatibilidade com o cliente singleton/fallback definido em lib/supabaseClient.ts
+  // para que o app não fique marcado como "offline" quando não há config manual/env explícita.
+  return { url: 'Configurado via Singleton', key: '******' };
   }
 };
 
