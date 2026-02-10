@@ -9,7 +9,7 @@ const getEnv = (key: string): string => {
   return (import.meta as any).env?.[key] || '';
 };
 
-export const getDbConfig = () => {
+export const getDbConfig = (): { url: string; key: string } | null => {
   const stored = localStorage.getItem(DB_CONFIG_KEY);
   if (stored) return JSON.parse(stored);
 
@@ -20,7 +20,7 @@ export const getDbConfig = () => {
     return { url, key };
   }
   
-  return { url: 'Configurado via Singleton', key: '******' };
+  return null;
 };
 
 const getActiveClient = () => {
