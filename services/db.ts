@@ -9,7 +9,7 @@ const getEnv = (key: string): string => {
   return (import.meta as any).env?.[key] || '';
 };
 
-export const getDbConfig = (): { url: string; key: string } => {
+export const getDbConfig = (): { url: string; key: string } | null => {
   const stored = localStorage.getItem(DB_CONFIG_KEY);
   if (stored) return JSON.parse(stored);
 
@@ -20,8 +20,15 @@ export const getDbConfig = (): { url: string; key: string } => {
     return { url, key };
   }
   
-  // Mantém compatibilidade com o cliente singleton/fallback definido em lib/supabaseClient.ts
-  // para que o app não fique marcado como "offline" quando não há config manual/env explícita.
+  return null;
+};
+
+export const getEffectiveDbConfig = (): { url: string; key: string } => {
+  const explicit = getDbConfig();
+  if (explicit) return explicit;
+
+  // Compatibilidade com o cliente singleton/fallback definido em lib/supabaseClient.ts.
+  // Evita que a UI marque o sistema como offline quando o client padrão está ativo.
   return { url: 'Configurado via Singleton', key: '******' };
 };
 
