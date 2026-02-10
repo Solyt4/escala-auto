@@ -16,7 +16,7 @@ import ScaleViewer from './components/ScaleViewer';
 import AnalysisViewer from './components/AnalysisViewer';
 import DatabaseConfig from './components/DatabaseConfig';
 
-import { fetchRemoteData, saveRemoteData, subscribeToData, getDbConfig } from './services/db';
+import { fetchRemoteData, saveRemoteData, subscribeToData, getEffectiveDbConfig } from './services/db';
 import { useAppStore } from './store/useAppStore';
 import supabase from './lib/supabaseClient';
 
@@ -110,7 +110,7 @@ const App: React.FC = () => {
         setAppData(JSON.parse(saved));
     }
 
-    const config = getDbConfig();
+    const config = getEffectiveDbConfig();
     setDbConnected(!!config);
     
     if(config) {
@@ -147,7 +147,7 @@ const App: React.FC = () => {
         return;
     }
 
-    if (getDbConfig()) {
+    if (getEffectiveDbConfig()) {
         setSyncStatus('SAVING');
         if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current);
         

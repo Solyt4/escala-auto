@@ -86,6 +86,20 @@ export interface ScaleEntry {
   customNote?: string; // Nome personalizado do serviço para aquele dia (ex: Apoio - Pintura)
 }
 
+export interface PendingSwap {
+  id: string;
+  sourceEntryId: string;
+  sourceDate: string; // YYYY-MM-DD
+  sourceServiceTypeId: string;
+  sourceMilitaryId: string;
+  sourceMilitaryName: string;
+  sourceMilitaryRank: Rank;
+  targetMilitaryId: string;
+  targetMilitaryName: string;
+  targetMilitaryRank: Rank;
+  createdAt: string;
+}
+
 export interface SectorRule {
   id: string;
   sectorName: string; // The sector name to match (case insensitive)
@@ -108,4 +122,5 @@ export interface AppData {
   scale: ScaleEntry[];
   sectorRules: SectorRule[]; 
   logs: AuditEntry[]; // Novo campo para persistência de logs
+  pendingSwaps?: PendingSwap[]; // Permutas pendentes aguardando próxima escala do militar alvo
 }
