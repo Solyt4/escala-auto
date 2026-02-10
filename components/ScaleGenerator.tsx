@@ -204,21 +204,15 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
     });
 
     tempPersonnel.forEach(p => {
-        let red = 0;
-        let total = p.totalServices || 0; 
-        
-        if (total === 0 && p.history && p.history.length > 0) {
-            total = p.history.length;
-            red = p.history.filter(h => isRedScale(h.date)).length;
-        } else {
-             if (p.history) {
-                 red = p.history.filter(h => isRedScale(h.date)).length;
-             }
-        }
-
+        const historyEntries = p.history || [];
         const preservedEntries = preservedScale.filter(s => s.militaryId === p.id);
-        total += preservedEntries.length;
-        red += preservedEntries.filter(s => isRedScale(s.date)).length;
+
+        // Base de cálculo sempre derivada de histórico + escala preservada.
+        // Evita dupla contagem quando totalServices já inclui entradas da escala ativa.
+        const total = historyEntries.length + preservedEntries.length;
+        const red =
+            historyEntries.filter(h => isRedScale(h.date)).length +
+            preservedEntries.filter(s => isRedScale(s.date)).length;
 
         realtimeStats.set(p.id, { total, red });
     });
@@ -273,7 +267,13 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
                 if (!isRed && m.exemptions?.skipBlackScale) return false;
 
                 const forcedServices = m.exemptions?.forceAllowedServices || [];
-                const hasExclusivity = forcedServices.length > 0;
+                const hasForcedServices = forcedServices.length > 0;
+
+                // Regra explícita: lista de serviços forçados ignora APENAS antiguidade/ano.
+                // As demais regras (posto, setor, interstício e indisponibilidade) continuam valendo.
+                if (hasForcedServices && !forcedServices.includes(service.id)) {
+                    return false;
+                }
                 
                 // --- LÓGICA DE EXCLUSIVIDADE POR ANTIGUIDADE (ANO DE FORMAÇÃO) ---
                 const soldierYear = m.formationYear || new Date().getFullYear();
@@ -288,7 +288,7 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
 
                 const isExclusiveSoldier = !!exclusiveService;
 
-                if (isExclusiveSoldier) {
+                if (!hasForcedServices && isExclusiveSoldier) {
                     // O militar é "Antigo/Especial". Ele TEM um serviço preferencial/exclusivo.
 
                     // Regra A: Se o serviço atual NÃO TEM limite de ano (é um serviço geral),
@@ -301,7 +301,7 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
                     if (soldierYear > service.maxFormationYear) {
                         return false; 
                     }
-                } else {
+                } else if (!hasForcedServices) {
                     // O militar é "Moderno" (Não se enquadra em nenhum serviço com limite de ano).
 
                     // Regra C: Ele não pode entrar em serviços que exigem antiguidade (que têm limite).
@@ -311,15 +311,11 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
                 }
                 // -------------------------------------------------------------------
 
-                if (hasExclusivity && !forcedServices.includes(service.id)) return false;
+                if (!service.allowedRanks.includes(m.rank)) return false;
                 
-                if (!hasExclusivity) {
-                    if (!service.allowedRanks.includes(m.rank)) return false;
-                    
-                    if (m.sector) {
-                        const rule = sectorRules.find(r => r.sectorName.toLowerCase() === m.sector!.toLowerCase());
-                        if (rule && !rule.allowedServiceIds.includes(service.id)) return false;
-                    }
+                if (m.sector) {
+                    const rule = sectorRules.find(r => r.sectorName.toLowerCase() === m.sector!.toLowerCase());
+                    if (rule && !rule.allowedServiceIds.includes(service.id)) return false;
                 }
 
                 // --- LÓGICA DE INTERSTÍCIO (DESCANSO) ---
