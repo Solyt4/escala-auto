@@ -159,8 +159,8 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
       }
 
       const finalScore = scoreDaysOff + scoreBurden + scoreRed;
-      
-      return finalScore;
+      return { finalScore, daysOff, diffTotal: rawDiff, scoreDaysOff, scoreBurden, scoreRed };
+
   };
 
   const executeGeneration = (start: Date, end: Date) => {
@@ -398,8 +398,10 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
                         targetAvgRed = candidate.rank === Rank.SD_EP ? avgEP.red : avgEV.red;
                     }
                 }
-
+              
                 const score = calculateDynamicScore(
+                const scoreBreakdown = calculateDynamicScore(
+
                     candidate, 
                     current, 
                     isRed, 
@@ -413,12 +415,27 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
                 return {
                     candidate,
                     score
+                    score: scoreBreakdown.finalScore,
+                    breakdown: scoreBreakdown
+
                 };
             });
 
             scoredCandidates.sort((a, b) => b.score - a.score);
 
             const selected = scoredCandidates[0].candidate;
+
+            const top3 = scoredCandidates.slice(0, 3);
+            tempLog.push(`ℹ️ AUDITORIA (${format(current, 'dd/MM')} | ${service.name} ${i + 1}/${effectiveQuantity}):`);
+            top3.forEach((entry, rankIndex) => {
+                tempLog.push(
+                    `   #${rankIndex + 1} ${entry.candidate.rank} ${entry.candidate.warName} | ` +
+                    `Score=${entry.score.toFixed(1)} [Folga=${entry.breakdown.scoreDaysOff.toFixed(1)} ` +
+                    `(${entry.breakdown.daysOff}d), Carga=${entry.breakdown.scoreBurden.toFixed(1)} ` +
+                    `(Δ${entry.breakdown.diffTotal.toFixed(2)}), Vermelha=${entry.breakdown.scoreRed.toFixed(1)}]`
+                );
+            });
+            tempLog.push(`   ✅ Selecionado: ${selected.rank} ${selected.warName}`);
 
             newScaleEntries.push({
                 id: `ent_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`,

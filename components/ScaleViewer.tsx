@@ -801,6 +801,8 @@ const ScaleViewer: React.FC = () => {
       if (swapMode === 'SUBSTITUICAO' && data.scale.some(s => s.date.substring(0, 10) === sourceDate && s.militaryId === p.id)) return false;
       if (hasRiskWindowViolation(p, sourceDate)) return false;
 
+
+
       const forcedServices = p.exemptions?.forceAllowedServices || [];
       const hasExclusivity = forcedServices.length > 0;
 

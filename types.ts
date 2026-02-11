@@ -126,3 +126,5 @@ export interface AppData {
   logs: AuditEntry[]; // Novo campo para persistência de logs
   pendingSwaps?: PendingSwap[]; // Permutas pendentes aguardando próxima escala do militar alvo
 }
+}
+
