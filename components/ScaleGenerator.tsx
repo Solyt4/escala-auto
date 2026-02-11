@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AppData, ScaleEntry, Military, ServiceType, Rank } from '../types';
-import { addDays, format, isBefore, differenceInDays } from 'date-fns';
+import { addDays, format, isBefore, differenceInDays, differenceInHours } from 'date-fns';
 import { Users, Calendar, AlertCircle, CheckCircle, Play, FileText, Settings, ShieldCheck, RefreshCw, Layers, AlertTriangle, X, BrainCircuit } from 'lucide-react';
 import { isRedScale } from '../utils/helpers';
 import { useAppStore } from '../store/useAppStore';
@@ -8,6 +8,12 @@ import { useAppStore } from '../store/useAppStore';
 const parseISO = (dateStr: string) => {
   const [year, month, day] = dateStr.split('-').map(Number);
   return new Date(year, month - 1, day);
+};
+
+const getServiceRestHours = (service?: ServiceType) => {
+  if (!service) return 0;
+  if (service.minRestHoursAfterService !== undefined) return Math.max(0, service.minRestHoursAfterService);
+  return service.is24h ? 24 : 0;
 };
 
 interface Props {
@@ -153,8 +159,8 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
       }
 
       const finalScore = scoreDaysOff + scoreBurden + scoreRed;
-      
       return { finalScore, daysOff, diffTotal: rawDiff, scoreDaysOff, scoreBurden, scoreRed };
+
   };
 
   const executeGeneration = (start: Date, end: Date) => {
@@ -318,30 +324,36 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
                     if (rule && !rule.allowedServiceIds.includes(service.id)) return false;
                 }
 
-                // --- LÓGICA DE INTERSTÍCIO (DESCANSO) ---
-                // Regra: Quem tirou 24h ontem, descansa hoje (independente se hoje é 24h ou Apoio).
-                // Regra: Quem tirou Apoio (Expediente) ontem, PODE tirar 24h hoje.
+                // --- LÓGICA DE JANELA DE RISCO (DESCANSO) ---
+                // Cada serviço pode definir sua janela mínima de descanso em horas.
+                // Exceção autorizada por perfil: bypassRiskWindow = true.
+                if (!m.exemptions?.bypassRiskWindow) {
+                    const historicalEntries = (m.history || []).map(h => ({
+                        date: h.date,
+                        serviceTypeId: h.serviceTypeId
+                    }));
 
-                const yesterdayStr = format(addDays(current, -1), 'yyyy-MM-dd');
-                
-                // Busca registros de ontem (Escala preservada, Escala nova gerando agora, ou Histórico antigo)
-                const entriesYesterday = [
-                    ...preservedScale.filter(s => s.date.substring(0, 10) === yesterdayStr && s.militaryId === m.id),
-                    ...newScaleEntries.filter(s => s.date === yesterdayStr && s.militaryId === m.id),
-                    ...(m.history?.filter(h => h.date === yesterdayStr).map(h => ({ ...h, serviceTypeId: h.serviceTypeId })) || [])
-                ];
+                    const previousEntries = [
+                        ...preservedScale
+                            .filter(s => s.militaryId === m.id && s.date.substring(0, 10) < dateStr)
+                            .map(s => ({ date: s.date.substring(0, 10), serviceTypeId: s.serviceTypeId })),
+                        ...newScaleEntries
+                            .filter(s => s.militaryId === m.id && s.date < dateStr)
+                            .map(s => ({ date: s.date, serviceTypeId: s.serviceTypeId })),
+                        ...historicalEntries.filter(h => h.date < dateStr)
+                    ];
 
-                if (entriesYesterday.length > 0) {
-                    // Verifica se algum serviço de ontem foi 24h
-                    const worked24hYesterday = entriesYesterday.some(entry => {
-                        const svcDef = data.services.find(s => s.id === entry.serviceTypeId);
-                        return svcDef?.is24h === true;
-                    });
+                    if (previousEntries.length > 0) {
+                        previousEntries.sort((a, b) => b.date.localeCompare(a.date));
+                        const lastEntry = previousEntries[0];
+                        const lastService = data.services.find(s => s.id === lastEntry.serviceTypeId);
+                        const minRestHours = getServiceRestHours(lastService);
 
-                    // Se trabalhou 24h ontem, está bloqueado hoje (seja pra 24h ou Apoio)
-                    if (worked24hYesterday) return false;
-                    
-                    // Se trabalhou apenas Apoio ontem, o loop continua e permite escalar hoje (cairá nos critérios de pontuação)
+                        if (minRestHours > 0) {
+                            const hoursSinceLastService = differenceInHours(current, parseISO(lastEntry.date));
+                            if (hoursSinceLastService < minRestHours) return false;
+                        }
+                    }
                 }
 
                 return true;
@@ -386,8 +398,10 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
                         targetAvgRed = candidate.rank === Rank.SD_EP ? avgEP.red : avgEV.red;
                     }
                 }
-
+              
+                const score = calculateDynamicScore(
                 const scoreBreakdown = calculateDynamicScore(
+
                     candidate, 
                     current, 
                     isRed, 
@@ -400,8 +414,10 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
 
                 return {
                     candidate,
+                    score
                     score: scoreBreakdown.finalScore,
                     breakdown: scoreBreakdown
+
                 };
             });
 

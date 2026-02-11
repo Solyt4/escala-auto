@@ -28,7 +28,7 @@ const DatabaseConfig: React.FC<Props> = ({ currentData, onDataLoaded }) => {
       return currentData.personnel.filter(p => {
           const ex = p.exemptions;
           if (!ex) return false;
-          return ex.skipBlackScale || ex.skipRedScale || (ex.forceAllowedServices && ex.forceAllowedServices.length > 0);
+          return ex.skipBlackScale || ex.skipRedScale || ex.bypassRiskWindow || (ex.forceAllowedServices && ex.forceAllowedServices.length > 0);
       }).sort((a, b) => a.warName.localeCompare(b.warName));
   }, [currentData.personnel]);
 
@@ -147,7 +147,7 @@ const DatabaseConfig: React.FC<Props> = ({ currentData, onDataLoaded }) => {
       URL.revokeObjectURL(url);
   };
 
-  const toggleExemption = async (id: string, type: 'skipBlackScale' | 'skipRedScale') => {
+  const toggleExemption = async (id: string, type: 'skipBlackScale' | 'skipRedScale' | 'bypassRiskWindow') => {
       const updatedPersonnel = currentData.personnel.map(p => {
           if (p.id === id) {
               const currentExemptions = p.exemptions || {};
@@ -168,7 +168,12 @@ const DatabaseConfig: React.FC<Props> = ({ currentData, onDataLoaded }) => {
       const mil = updatedPersonnel.find(p => p.id === id);
       if (mil) {
         const status = mil.exemptions?.[type] ? 'ATIVADO' : 'DESATIVADO';
-        const label = type === 'skipBlackScale' ? 'Isenção Escala Preta' : 'Isenção Escala Vermelha';
+        const label =
+          type === 'skipBlackScale'
+            ? 'Isenção Escala Preta'
+            : type === 'skipRedScale'
+              ? 'Isenção Escala Vermelha'
+              : 'Exceção de Janela de Risco';
         
         await logAuditAction({
             action: 'UPDATE_EXEMPTION',
@@ -363,6 +368,22 @@ const DatabaseConfig: React.FC<Props> = ({ currentData, onDataLoaded }) => {
                                                           <div className="w-8 h-4 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-red-600"></div>
                                                       </div>
                                                   </label>
+
+                                                  <label className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer hover:shadow-sm transition-all ${mil.exemptions?.bypassRiskWindow ? 'bg-purple-50 border-purple-300' : 'bg-gray-50 border-gray-200'}`}>
+                                                      <div className="flex flex-col">
+                                                          <span className="font-bold text-gray-800 text-xs">Bypass Janela de Risco</span>
+                                                          <span className="text-[10px] text-gray-500">Permite escalar sem descanso mínimo</span>
+                                                      </div>
+                                                      <div className="relative">
+                                                          <input
+                                                              type="checkbox"
+                                                              className="sr-only peer"
+                                                              checked={mil.exemptions?.bypassRiskWindow || false}
+                                                              onChange={() => toggleExemption(mil.id, 'bypassRiskWindow')}
+                                                          />
+                                                          <div className="w-8 h-4 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-purple-600"></div>
+                                                      </div>
+                                                  </label>
                                               </div>
                                           </div>
 
@@ -456,6 +477,11 @@ const DatabaseConfig: React.FC<Props> = ({ currentData, onDataLoaded }) => {
                                               {mil.exemptions?.skipRedScale && (
                                                   <span className="px-2 py-1 bg-red-50 text-red-700 text-[10px] font-bold uppercase rounded border border-red-200 flex items-center gap-1">
                                                       <Ban className="w-3 h-3"/> Escala Vermelha
+                                                  </span>
+                                              )}
+                                              {mil.exemptions?.bypassRiskWindow && (
+                                                  <span className="px-2 py-1 bg-purple-50 text-purple-700 text-[10px] font-bold uppercase rounded border border-purple-200 flex items-center gap-1">
+                                                      <Unlock className="w-3 h-3"/> Bypass Janela
                                                   </span>
                                               )}
                                               {forcedNames && forcedNames.length > 0 && forcedNames.map(name => (

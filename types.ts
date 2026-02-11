@@ -26,6 +26,7 @@ export interface ServiceType {
   endTime?: string; // Optional for non-24h
   maxFormationYear?: number; // Optional limit: only personnel formed in this year or earlier
   isBlackScaleOnly?: boolean; // Novo campo: Se true, serviço só ocorre em dias de Escala Preta (Dias Úteis)
+  minRestHoursAfterService?: number; // Janela mínima de descanso (em horas) após executar este serviço
 }
 
 export interface VacationData {
@@ -48,6 +49,7 @@ export interface MilitaryExemptions {
   skipBlackScale?: boolean; // Pula escala preta (dias úteis)
   skipRedScale?: boolean;   // Pula escala vermelha (fds/feriados)
   forceAllowedServices?: string[]; // Lista de IDs de serviços que o militar pode tirar IGNORANDO regras de antiguidade/ano
+  bypassRiskWindow?: boolean; // Exceção autorizada: ignora bloqueio de janela mínima de descanso
 }
 
 export interface Military {
@@ -124,3 +126,5 @@ export interface AppData {
   logs: AuditEntry[]; // Novo campo para persistência de logs
   pendingSwaps?: PendingSwap[]; // Permutas pendentes aguardando próxima escala do militar alvo
 }
+}
+

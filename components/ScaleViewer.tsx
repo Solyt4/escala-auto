@@ -3,7 +3,7 @@ import { useAppStore } from '../store/useAppStore';
 import { ScaleEntry, Rank, ServiceType, Military, PendingSwap } from '../types';
 import { isRedScale, syncPersonnelStats, commitScaleToHistory, parseISO } from '../utils/helpers';
 import { logAuditAction } from '../services/db';
-import { format, addDays, differenceInDays } from 'date-fns';
+import { format, addDays, differenceInDays, differenceInHours } from 'date-fns';
 import ptBR from 'date-fns/locale/pt-BR';
 import { 
   Calendar, Printer, CalendarDays, X, Bomb, 
@@ -68,6 +68,34 @@ const ScaleViewer: React.FC = () => {
       if (rank === Rank.CB) return 'Cb';
       if (rank === Rank.SD_EP || rank === Rank.SD_EV) return 'Sd';
       return rank;
+  };
+
+  const hasRiskWindowViolation = (military: Military, targetDate: string) => {
+      if (military.exemptions?.bypassRiskWindow) return false;
+
+      const previousScaleEntries = data.scale
+          .filter(entry => entry.militaryId === military.id && entry.date.substring(0, 10) < targetDate)
+          .map(entry => ({ date: entry.date.substring(0, 10), serviceTypeId: entry.serviceTypeId }));
+
+      const previousHistoryEntries = (military.history || [])
+          .filter(entry => entry.date < targetDate)
+          .map(entry => ({ date: entry.date, serviceTypeId: entry.serviceTypeId }));
+
+      const allPrevious = [...previousScaleEntries, ...previousHistoryEntries];
+      if (allPrevious.length === 0) return false;
+
+      allPrevious.sort((a, b) => b.date.localeCompare(a.date));
+      const lastEntry = allPrevious[0];
+      const lastService = serviceMap.get(lastEntry.serviceTypeId);
+      const minRestHours =
+          lastService?.minRestHoursAfterService !== undefined
+              ? Math.max(0, lastService.minRestHoursAfterService)
+              : (lastService?.is24h ? 24 : 0);
+
+      if (minRestHours <= 0) return false;
+
+      const hoursSinceLastService = differenceInHours(parseISO(targetDate), parseISO(lastEntry.date));
+      return hoursSinceLastService < minRestHours;
   };
 
   const groupedAndSortedData = useMemo(() => {
@@ -771,6 +799,9 @@ const ScaleViewer: React.FC = () => {
       if (p.status !== 'ATIVO') return false;
       if (swapMode === 'SUBSTITUICAO' && p.unavailableDates.some(d => d.substring(0, 10) === sourceDate)) return false;
       if (swapMode === 'SUBSTITUICAO' && data.scale.some(s => s.date.substring(0, 10) === sourceDate && s.militaryId === p.id)) return false;
+      if (hasRiskWindowViolation(p, sourceDate)) return false;
+
+
 
       const forcedServices = p.exemptions?.forceAllowedServices || [];
       const hasExclusivity = forcedServices.length > 0;
@@ -817,10 +848,14 @@ const ScaleViewer: React.FC = () => {
                      }
                      if (sourceMil.sector) {
                          const sourceRule = data.sectorRules?.find(r => r.sectorName.toLowerCase() === sourceMil.sector!.toLowerCase());
-                         if (sourceRule && !sourceRule.allowedServiceIds.includes(targetService.id)) {
+                     if (sourceRule && !sourceRule.allowedServiceIds.includes(targetService.id)) {
                              return false;
                          }
                      }
+                 }
+
+                 if (hasRiskWindowViolation(sourceMil, targetEntry.date.substring(0, 10))) {
+                     return false;
                  }
              }
          }
