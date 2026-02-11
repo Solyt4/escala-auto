@@ -12,7 +12,7 @@ const ServiceManager: React.FC = () => {
   const { data, user, setAppData } = useAppStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [form, setForm] = useState<Partial<ServiceType>>({ allowedRanks: [], is24h: true, quantity: 1, isBlackScaleOnly: false });
+  const [form, setForm] = useState<Partial<ServiceType>>({ allowedRanks: [], is24h: true, quantity: 1, isBlackScaleOnly: false, minRestHoursAfterService: undefined });
   const [sectorRuleForm, setSectorRuleForm] = useState<Partial<SectorRule>>({ sectorName: '', allowedServiceIds: [] });
   
   const [modalConfig, setModalConfig] = useState<{
@@ -40,7 +40,7 @@ const ServiceManager: React.FC = () => {
   const handleCreate = () => { 
     setEditingId('NEW'); 
     setError(''); 
-    setForm({ id: '', name: '', allowedRanks: [], is24h: true, quantity: 1, redScaleQuantity: undefined, startTime: '', endTime: '', maxFormationYear: undefined, isBlackScaleOnly: false }); 
+    setForm({ id: '', name: '', allowedRanks: [], is24h: true, quantity: 1, redScaleQuantity: undefined, startTime: '', endTime: '', maxFormationYear: undefined, isBlackScaleOnly: false, minRestHoursAfterService: undefined }); 
   };
   
   const startEdit = (service: ServiceType) => { 
@@ -91,6 +91,13 @@ const ServiceManager: React.FC = () => {
       }
     }
 
+    if (form.minRestHoursAfterService !== undefined && form.minRestHoursAfterService !== null) {
+      if (form.minRestHoursAfterService < 0 || form.minRestHoursAfterService > 168) {
+        setError('A janela mínima de descanso deve estar entre 0 e 168 horas.');
+        return;
+      }
+    }
+
     let updatedList = [...data.services]; 
     if (editingId === 'NEW') { 
         updatedList.push({ 
@@ -101,7 +108,8 @@ const ServiceManager: React.FC = () => {
             quantity: form.quantity || 1, 
             redScaleQuantity: form.redScaleQuantity,
             is24h: form.is24h || false,
-            isBlackScaleOnly: form.isBlackScaleOnly || false
+            isBlackScaleOnly: form.isBlackScaleOnly || false,
+            minRestHoursAfterService: form.minRestHoursAfterService
         } as ServiceType); 
     } else { 
         updatedList = updatedList.map(s => s.id === editingId ? { ...form, id: editingId } as ServiceType : s); 
@@ -272,6 +280,25 @@ const ServiceManager: React.FC = () => {
                       placeholder="Opcional (Ex: 2022)" 
                       value={form.maxFormationYear === undefined ? '' : form.maxFormationYear} 
                       onChange={e => setForm({...form, maxFormationYear: e.target.value === '' ? undefined : parseInt(e.target.value)})} 
+                    />
+                </div>
+                <div>
+                    <div className="flex items-center gap-1 mb-1 group relative w-fit">
+                        <label className="text-xs font-bold text-gray-500 uppercase cursor-help">Janela de Risco (h)</label>
+                        <HelpCircle className="w-3 h-3 text-gray-400" />
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 bg-gray-800 text-white text-[10px] p-2 rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 text-center leading-tight">
+                            Define descanso mínimo após este serviço. Ex: 36 ou 48 horas. Em branco: 24h para serviços 24h e 0h para expediente.
+                            <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>
+                        </div>
+                    </div>
+                    <input 
+                      type="number" 
+                      min={0}
+                      max={168}
+                      className="w-full p-2 border border-gray-300 rounded bg-white focus:ring-2 focus:ring-military-500 placeholder-gray-300" 
+                      placeholder="Ex: 36" 
+                      value={form.minRestHoursAfterService === undefined ? '' : form.minRestHoursAfterService} 
+                      onChange={e => setForm({...form, minRestHoursAfterService: e.target.value === '' ? undefined : parseInt(e.target.value)})} 
                     />
                 </div>
               </div>

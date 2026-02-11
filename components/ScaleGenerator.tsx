@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AppData, ScaleEntry, Military, ServiceType, Rank } from '../types';
-import { addDays, format, isBefore, differenceInDays } from 'date-fns';
+import { addDays, format, isBefore, differenceInDays, differenceInHours } from 'date-fns';
 import { Users, Calendar, AlertCircle, CheckCircle, Play, FileText, Settings, ShieldCheck, RefreshCw, Layers, AlertTriangle, X, BrainCircuit } from 'lucide-react';
 import { isRedScale } from '../utils/helpers';
 import { useAppStore } from '../store/useAppStore';
@@ -8,6 +8,12 @@ import { useAppStore } from '../store/useAppStore';
 const parseISO = (dateStr: string) => {
   const [year, month, day] = dateStr.split('-').map(Number);
   return new Date(year, month - 1, day);
+};
+
+const getServiceRestHours = (service?: ServiceType) => {
+  if (!service) return 0;
+  if (service.minRestHoursAfterService !== undefined) return Math.max(0, service.minRestHoursAfterService);
+  return service.is24h ? 24 : 0;
 };
 
 interface Props {
@@ -154,7 +160,7 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
 
       const finalScore = scoreDaysOff + scoreBurden + scoreRed;
       
-      return { finalScore, daysOff, diffTotal: rawDiff };
+      return finalScore;
   };
 
   const executeGeneration = (start: Date, end: Date) => {
@@ -204,21 +210,15 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
     });
 
     tempPersonnel.forEach(p => {
-        let red = 0;
-        let total = p.totalServices || 0; 
-        
-        if (total === 0 && p.history && p.history.length > 0) {
-            total = p.history.length;
-            red = p.history.filter(h => isRedScale(h.date)).length;
-        } else {
-             if (p.history) {
-                 red = p.history.filter(h => isRedScale(h.date)).length;
-             }
-        }
-
+        const historyEntries = p.history || [];
         const preservedEntries = preservedScale.filter(s => s.militaryId === p.id);
-        total += preservedEntries.length;
-        red += preservedEntries.filter(s => isRedScale(s.date)).length;
+
+        // Base de cálculo sempre derivada de histórico + escala preservada.
+        // Evita dupla contagem quando totalServices já inclui entradas da escala ativa.
+        const total = historyEntries.length + preservedEntries.length;
+        const red =
+            historyEntries.filter(h => isRedScale(h.date)).length +
+            preservedEntries.filter(s => isRedScale(s.date)).length;
 
         realtimeStats.set(p.id, { total, red });
     });
@@ -273,7 +273,13 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
                 if (!isRed && m.exemptions?.skipBlackScale) return false;
 
                 const forcedServices = m.exemptions?.forceAllowedServices || [];
-                const hasExclusivity = forcedServices.length > 0;
+                const hasForcedServices = forcedServices.length > 0;
+
+                // Regra explícita: lista de serviços forçados ignora APENAS antiguidade/ano.
+                // As demais regras (posto, setor, interstício e indisponibilidade) continuam valendo.
+                if (hasForcedServices && !forcedServices.includes(service.id)) {
+                    return false;
+                }
                 
                 // --- LÓGICA DE EXCLUSIVIDADE POR ANTIGUIDADE (ANO DE FORMAÇÃO) ---
                 const soldierYear = m.formationYear || new Date().getFullYear();
@@ -288,7 +294,7 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
 
                 const isExclusiveSoldier = !!exclusiveService;
 
-                if (isExclusiveSoldier) {
+                if (!hasForcedServices && isExclusiveSoldier) {
                     // O militar é "Antigo/Especial". Ele TEM um serviço preferencial/exclusivo.
 
                     // Regra A: Se o serviço atual NÃO TEM limite de ano (é um serviço geral),
@@ -301,7 +307,7 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
                     if (soldierYear > service.maxFormationYear) {
                         return false; 
                     }
-                } else {
+                } else if (!hasForcedServices) {
                     // O militar é "Moderno" (Não se enquadra em nenhum serviço com limite de ano).
 
                     // Regra C: Ele não pode entrar em serviços que exigem antiguidade (que têm limite).
@@ -311,41 +317,43 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
                 }
                 // -------------------------------------------------------------------
 
-                if (hasExclusivity && !forcedServices.includes(service.id)) return false;
+                if (!service.allowedRanks.includes(m.rank)) return false;
                 
-                if (!hasExclusivity) {
-                    if (!service.allowedRanks.includes(m.rank)) return false;
-                    
-                    if (m.sector) {
-                        const rule = sectorRules.find(r => r.sectorName.toLowerCase() === m.sector!.toLowerCase());
-                        if (rule && !rule.allowedServiceIds.includes(service.id)) return false;
-                    }
+                if (m.sector) {
+                    const rule = sectorRules.find(r => r.sectorName.toLowerCase() === m.sector!.toLowerCase());
+                    if (rule && !rule.allowedServiceIds.includes(service.id)) return false;
                 }
 
-                // --- LÓGICA DE INTERSTÍCIO (DESCANSO) ---
-                // Regra: Quem tirou 24h ontem, descansa hoje (independente se hoje é 24h ou Apoio).
-                // Regra: Quem tirou Apoio (Expediente) ontem, PODE tirar 24h hoje.
+                // --- LÓGICA DE JANELA DE RISCO (DESCANSO) ---
+                // Cada serviço pode definir sua janela mínima de descanso em horas.
+                // Exceção autorizada por perfil: bypassRiskWindow = true.
+                if (!m.exemptions?.bypassRiskWindow) {
+                    const historicalEntries = (m.history || []).map(h => ({
+                        date: h.date,
+                        serviceTypeId: h.serviceTypeId
+                    }));
 
-                const yesterdayStr = format(addDays(current, -1), 'yyyy-MM-dd');
-                
-                // Busca registros de ontem (Escala preservada, Escala nova gerando agora, ou Histórico antigo)
-                const entriesYesterday = [
-                    ...preservedScale.filter(s => s.date.substring(0, 10) === yesterdayStr && s.militaryId === m.id),
-                    ...newScaleEntries.filter(s => s.date === yesterdayStr && s.militaryId === m.id),
-                    ...(m.history?.filter(h => h.date === yesterdayStr).map(h => ({ ...h, serviceTypeId: h.serviceTypeId })) || [])
-                ];
+                    const previousEntries = [
+                        ...preservedScale
+                            .filter(s => s.militaryId === m.id && s.date.substring(0, 10) < dateStr)
+                            .map(s => ({ date: s.date.substring(0, 10), serviceTypeId: s.serviceTypeId })),
+                        ...newScaleEntries
+                            .filter(s => s.militaryId === m.id && s.date < dateStr)
+                            .map(s => ({ date: s.date, serviceTypeId: s.serviceTypeId })),
+                        ...historicalEntries.filter(h => h.date < dateStr)
+                    ];
 
-                if (entriesYesterday.length > 0) {
-                    // Verifica se algum serviço de ontem foi 24h
-                    const worked24hYesterday = entriesYesterday.some(entry => {
-                        const svcDef = data.services.find(s => s.id === entry.serviceTypeId);
-                        return svcDef?.is24h === true;
-                    });
+                    if (previousEntries.length > 0) {
+                        previousEntries.sort((a, b) => b.date.localeCompare(a.date));
+                        const lastEntry = previousEntries[0];
+                        const lastService = data.services.find(s => s.id === lastEntry.serviceTypeId);
+                        const minRestHours = getServiceRestHours(lastService);
 
-                    // Se trabalhou 24h ontem, está bloqueado hoje (seja pra 24h ou Apoio)
-                    if (worked24hYesterday) return false;
-                    
-                    // Se trabalhou apenas Apoio ontem, o loop continua e permite escalar hoje (cairá nos critérios de pontuação)
+                        if (minRestHours > 0) {
+                            const hoursSinceLastService = differenceInHours(current, parseISO(lastEntry.date));
+                            if (hoursSinceLastService < minRestHours) return false;
+                        }
+                    }
                 }
 
                 return true;
@@ -391,7 +399,7 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
                     }
                 }
 
-                const { finalScore } = calculateDynamicScore(
+                const score = calculateDynamicScore(
                     candidate, 
                     current, 
                     isRed, 
@@ -402,7 +410,10 @@ const ScaleGenerator: React.FC<Props> = ({ data, onUpdateData }) => {
                     equalizeScale
                 );
 
-                return { candidate, score: finalScore };
+                return {
+                    candidate,
+                    score
+                };
             });
 
             scoredCandidates.sort((a, b) => b.score - a.score);
